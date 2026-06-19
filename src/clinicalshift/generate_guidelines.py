@@ -493,11 +493,11 @@ def generate_collection(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Generate clinical guideline collections."
-    )
+    parser = argparse.ArgumentParser(description="Generate clinical guideline collections.")
     parser.add_argument(
-        "--output-dir", type=str, default=str(DATA_DIR),
+        "--output-dir",
+        type=str,
+        default=str(DATA_DIR),
         help="Output directory for JSON files",
     )
     args = parser.parse_args()
@@ -505,24 +505,22 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
 
     # tau_old: baseline 2025, institution A
-    tau_old = generate_collection(
-        BASELINE_GUIDELINES, epoch="2025", institution="A"
-    )
+    tau_old = generate_collection(BASELINE_GUIDELINES, epoch="2025", institution="A")
     # tau_new: 2026 with temporal shifts
     tau_new = generate_collection(
-        BASELINE_GUIDELINES, temporal_shifts=TEMPORAL_SHIFTS,
-        epoch="2026", institution="A"
+        BASELINE_GUIDELINES, temporal_shifts=TEMPORAL_SHIFTS, epoch="2026", institution="A"
     )
     # instA: same as tau_old
     inst_a = tau_old
     # instB: vocabulary-transformed
     inst_b = generate_collection(
-        BASELINE_GUIDELINES, vocab_map=VOCAB_MAP,
-        epoch="2025", institution="B"
+        BASELINE_GUIDELINES, vocab_map=VOCAB_MAP, epoch="2025", institution="B"
     )
     # schema_erased: tau_old content with metadata stripped
     schema_erased = generate_collection(
-        BASELINE_GUIDELINES, epoch="2025", institution="A",
+        BASELINE_GUIDELINES,
+        epoch="2025",
+        institution="A",
         strip_metadata=True,
     )
 
@@ -530,16 +528,16 @@ def main():
     (out / "guidelines_tau_new.json").write_text(json.dumps(tau_new, indent=2))
     (out / "guidelines_instA.json").write_text(json.dumps(inst_a, indent=2))
     (out / "guidelines_instB.json").write_text(json.dumps(inst_b, indent=2))
-    (out / "guidelines_schema_erased.json").write_text(
-        json.dumps(schema_erased, indent=2)
-    )
+    (out / "guidelines_schema_erased.json").write_text(json.dumps(schema_erased, indent=2))
 
     # Report
     n_shifted = len(TEMPORAL_SHIFTS)
     print(f"Generated guideline collections in {out}/")
     print(f"  tau_old:        {len(tau_old)} docs (baseline 2025)")
-    print(f"  tau_new:        {len(tau_new)} docs ({n_shifted} shifted, "
-          f"{n_shifted/len(tau_old)*100:.0f}% contradiction density)")
+    print(
+        f"  tau_new:        {len(tau_new)} docs ({n_shifted} shifted, "
+        f"{n_shifted/len(tau_old)*100:.0f}% contradiction density)"
+    )
     print(f"  instA:          {len(inst_a)} docs (= tau_old)")
     print(f"  instB:          {len(inst_b)} docs (vocabulary transformed)")
     print(f"  schema_erased:  {len(schema_erased)} docs (metadata stripped)")

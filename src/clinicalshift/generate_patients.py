@@ -119,15 +119,17 @@ def generate_summary(pid, age, sex, dx_list, egfr, medications):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Generate synthetic patient cohort."
-    )
+    parser = argparse.ArgumentParser(description="Generate synthetic patient cohort.")
     parser.add_argument(
-        "--n", type=int, default=50000,
+        "--n",
+        type=int,
+        default=50000,
         help="Number of patients to generate",
     )
     parser.add_argument(
-        "--seed", type=int, default=42,
+        "--seed",
+        type=int,
+        default=42,
         help="Random seed for reproducibility",
     )
     args = parser.parse_args()
@@ -145,16 +147,18 @@ def main():
         medications = sample_medications(dx_list, egfr, age)
         time_epoch = random.choice([2025, 2026])
         summary_gt = generate_summary(pid, age, sex, dx_list, egfr, medications)
-        rows.append({
-            "patient_id": pid,
-            "age": age,
-            "sex": sex,
-            "egfr": egfr,
-            "dx_list": ";".join(dx_list),
-            "med_list": json.dumps(medications),
-            "time_epoch": time_epoch,
-            "summary_gt": summary_gt,
-        })
+        rows.append(
+            {
+                "patient_id": pid,
+                "age": age,
+                "sex": sex,
+                "egfr": egfr,
+                "dx_list": ";".join(dx_list),
+                "med_list": json.dumps(medications),
+                "time_epoch": time_epoch,
+                "summary_gt": summary_gt,
+            }
+        )
 
     df = pd.DataFrame(rows)
     df.to_csv(DATA_DIR / "patients.csv", index=False)
@@ -163,12 +167,15 @@ def main():
     on_met = df[df["med_list"].str.contains("metformin", na=False)]
     print(f"Generated {len(df)} patients -> data/patients.csv")
     print(f"  On metformin: {len(on_met)} ({100*len(on_met)/len(df):.1f}%)")
-    print(f"  Metformin + eGFR<30: {len(on_met[on_met.egfr < 30])}"
-          f" (prescribing errors)")
-    print(f"  Metformin + eGFR 30-45: {len(on_met[(on_met.egfr>=30)&(on_met.egfr<45)])}"
-          f" (tau_new contradictions)")
-    print(f"  CKD_stage4 + metformin: "
-          f"{len(on_met[on_met.dx_list.str.contains('CKD_stage4', na=False)])}")
+    print(f"  Metformin + eGFR<30: {len(on_met[on_met.egfr < 30])}" f" (prescribing errors)")
+    print(
+        f"  Metformin + eGFR 30-45: {len(on_met[(on_met.egfr>=30)&(on_met.egfr<45)])}"
+        f" (tau_new contradictions)"
+    )
+    print(
+        f"  CKD_stage4 + metformin: "
+        f"{len(on_met[on_met.dx_list.str.contains('CKD_stage4', na=False)])}"
+    )
     ckd_both = df[df.dx_list.str.contains("CKD_stage3") & df.dx_list.str.contains("CKD_stage4")]
     print(f"  CKD3+CKD4 co-occurrence: {len(ckd_both)} (should be 0)")
 

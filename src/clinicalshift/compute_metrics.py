@@ -7,13 +7,14 @@ import pandas as pd
 import plotly.express as px
 import plotly.io as pio
 
+# Shim 1: transformers 5.x removed build_inputs_with_special_tokens
+# from slow tokenizers, but bert_score 0.3.x still calls it.
+from transformers import RobertaTokenizer
+
 # =====================================================================
 # Compatibility shims for bert_score + transformers 5.x
 # =====================================================================
 
-# Shim 1: transformers 5.x removed build_inputs_with_special_tokens
-# from slow tokenizers, but bert_score 0.3.x still calls it.
-from transformers import RobertaTokenizer
 
 if not hasattr(RobertaTokenizer, "build_inputs_with_special_tokens"):
 
@@ -24,9 +25,7 @@ if not hasattr(RobertaTokenizer, "build_inputs_with_special_tokens"):
             return cls + token_ids_0 + sep
         return cls + token_ids_0 + sep + sep + token_ids_1 + sep
 
-    RobertaTokenizer.build_inputs_with_special_tokens = (
-        _build_inputs_with_special_tokens
-    )
+    RobertaTokenizer.build_inputs_with_special_tokens = _build_inputs_with_special_tokens
 
 # Shim 2: tokenizer.model_max_length can overflow the Rust tokenizer's
 # enable_truncation (OverflowError: int too big to convert).
@@ -62,6 +61,7 @@ TEXT_FMT_3F_S = "%{text:.3f}s"
 def get_device() -> str:
     """Detect best available device for PyTorch inference."""
     from clinicalshift import get_device as _get_device
+
     return _get_device()
 
 

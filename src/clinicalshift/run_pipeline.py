@@ -75,9 +75,7 @@ def prepare_patient_row(row: pd.Series, regime: str) -> pd.Series:
 
     # Determine ground-truth contradictions for this regime
     gt_contradictions = set()
-    uses_metformin = any(
-        m.get("drug", "").lower() == "metformin" for m in med_list
-    )
+    uses_metformin = any(m.get("drug", "").lower() == "metformin" for m in med_list)
     has_ckd_stage4 = "CKD_stage4" in dx_list
 
     if uses_metformin:
@@ -92,17 +90,19 @@ def prepare_patient_row(row: pd.Series, regime: str) -> pd.Series:
     # the regime's guidelines
     epoch_aligned = len(gt_contradictions) == 0
 
-    prepared = pd.Series({
-        "patientid": patient_id,
-        "timeepoch": time_epoch,
-        "Xraw": x_raw,
-        "y_star": x_raw,  # Ground truth = original factual summary
-        "gtcontradictions": _json.dumps(sorted(gt_contradictions)),
-        "epoch_aligned": epoch_aligned,
-        "egfr": egfr,
-        "dx_list": ";".join(dx_list),
-        "med_list": row["med_list"],
-    })
+    prepared = pd.Series(
+        {
+            "patientid": patient_id,
+            "timeepoch": time_epoch,
+            "Xraw": x_raw,
+            "y_star": x_raw,  # Ground truth = original factual summary
+            "gtcontradictions": _json.dumps(sorted(gt_contradictions)),
+            "epoch_aligned": epoch_aligned,
+            "egfr": egfr,
+            "dx_list": ";".join(dx_list),
+            "med_list": row["med_list"],
+        }
+    )
     return prepared
 
 
@@ -332,10 +332,7 @@ def audit_agent_call(
         # Rule 2: CKD stage 4 (always contraindicated regardless of eGFR)
         has_ckd4 = any("ckd_stage4" in d for d in diagnoses)
         if has_ckd4:
-            issues.append(
-                "Metformin contraindicated in CKD stage 4 — "
-                "risk of lactic acidosis."
-            )
+            issues.append("Metformin contraindicated in CKD stage 4 — " "risk of lactic acidosis.")
             normalized_keys.append("metformin_ckd_stage4")
 
     # Deduplicate
@@ -491,9 +488,7 @@ def safety_graph_mode(
         retrieved = rag_agent_call(x_parsed, collection=collection)
         state.retrieved = retrieved
 
-        audit_meta = audit_agent_call(
-            x_parsed, retrieved, gt_contradictions, regime=regime
-        )
+        audit_meta = audit_agent_call(x_parsed, retrieved, gt_contradictions, regime=regime)
         state.audit = audit_meta
         last_audit = audit_meta
 
