@@ -41,8 +41,8 @@ metrics:
 	$(RUN) compute-metrics
 
 clean:
-	rm -f results/results_*.csv results/metrics_summary.csv
-	rm -f results/plot_*.png results/plot_*.html
+	rm -f results/results_*.csv results/metrics_summary.csv 2>/dev/null || true
+	rm -f results/plot_*.png results/plot_*.html 2>/dev/null || true
 
 all: install data vectorstores verify run metrics
 	@echo "=== Full pipeline complete ==="
