@@ -1,0 +1,29 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv/
+.history/
+.qodo/
+
+# Data artifacts (regenerated via `make data` / `make vectorstores`)
+data/chroma_db/
+data/patients.csv
+data/guidelines_*.json
+
+# Results (regenerated via `make run` / `make metrics`)
+results/*
+!results/.gitkeep
+
+# Environment
+.env
+
+# OS
+.DS_Store
+
+archives
