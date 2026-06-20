@@ -22,6 +22,7 @@ dependencies = [
     "bert-score>=0.3.13",
     "kaleido>=0.2.1",
     "geopy>=2.4.1",
+    "pydantic-settings>=2.14.2",
 ]
 
 [project.optional-dependencies]
