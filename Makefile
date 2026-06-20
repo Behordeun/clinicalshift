@@ -3,8 +3,9 @@
 # uv-managed project — use `uv run` to invoke entry points
 RUN := uv run
 N_SMOKE := 10
-N_FULL := 2000
+N_FULL := 500
 SEED := 42
+WORKERS := 3
 
 install:
 	uv sync
@@ -29,13 +30,13 @@ verify:
 
 smoke:
 	@echo "=== Smoke test: $(N_SMOKE) patients x all conditions ==="
-	$(RUN) run-pipeline --run-all --n $(N_SMOKE) --seed $(SEED)
+	$(RUN) run-pipeline --run-all --n $(N_SMOKE) --seed $(SEED) --workers $(WORKERS)
 	$(RUN) compute-metrics
 	@echo "=== Smoke test complete. Inspect results/ ==="
 
 run:
-	@echo "=== Full run: $(N_FULL) patients x all conditions ==="
-	$(RUN) run-pipeline --run-all --n $(N_FULL) --seed $(SEED)
+	@echo "=== Full run: $(N_FULL) patients x all conditions ($(WORKERS) workers) ==="
+	$(RUN) run-pipeline --run-all --n $(N_FULL) --seed $(SEED) --workers $(WORKERS)
 
 metrics:
 	$(RUN) compute-metrics

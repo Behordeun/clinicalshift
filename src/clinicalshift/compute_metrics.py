@@ -141,20 +141,66 @@ def extract_gt_keys(gt_series: pd.Series) -> List[List[str]]:
 
 def compute_fccr(df: pd.DataFrame) -> float:
     """
-    Fact-Checking Coverage Ratio:
-    proportion of unique ground-truth keys that were detected at least once.
+    Per-patient Fact-Checking Coverage Ratio.
+
+    For each patient with at least one ground-truth contradiction,
+    compute the fraction of that patient's contradictions detected.
+    Returns mean per-patient detection rate across the contradicted subset.
     """
     detected_lists = extract_detected_keys(df["auditissues"])
     gt_lists = extract_gt_keys(df["gtcontradictions"])
 
-    detected_all = {k for keys in detected_lists for k in keys}
-    gt_all = {k for keys in gt_lists for k in keys}
+    per_patient_scores = []
+    for detected, gt in zip(detected_lists, gt_lists):
+        if not gt:
+            continue  # Skip patients with no contradictions
+        detected_set = set(detected)
+        gt_set = set(gt)
+        score = len(detected_set.intersection(gt_set)) / len(gt_set)
+        per_patient_scores.append(score)
 
-    if not gt_all:
+    if not per_patient_scores:
         return 0.0
 
-    covered = detected_all.intersection(gt_all)
-    return float(len(covered) / len(gt_all))
+    return float(np.mean(per_patient_scores))
+
+
+def compute_gcs(df: pd.DataFrame) -> float:
+    """
+    Guideline Compliance Score (GCS).
+
+    For patients with ground-truth contradictions, checks whether
+    the generated summary contains language acknowledging the
+    contraindication. Uses deterministic string matching.
+
+    Returns fraction of contradicted patients whose Y_final
+    contains compliance language near the relevant drug name.
+    """
+    gt_lists = extract_gt_keys(df["gtcontradictions"])
+    y_finals = df["y_final"].fillna("").tolist()
+
+    compliance_terms = [
+        "avoid", "contraindicated", "discontinue", "switch",
+        "stop", "not recommended", "should not", "withhold",
+        "alternative", "risk of lactic acidosis",
+    ]
+
+    compliant_count = 0
+    total_contradicted = 0
+
+    for gt, y_final in zip(gt_lists, y_finals):
+        if not gt:
+            continue
+        total_contradicted += 1
+        y_lower = y_final.lower()
+        # Check if any compliance term appears in the output
+        if any(term in y_lower for term in compliance_terms):
+            compliant_count += 1
+
+    if total_contradicted == 0:
+        return float("nan")
+
+    return float(compliant_count / total_contradicted)
 
 
 # ---------------------------------------------------------------------
@@ -268,6 +314,9 @@ def summarize_condition(path: Path) -> Dict[str, Any]:
     # FCCR
     fccr = compute_fccr(df)
 
+    # GCS
+    gcs = compute_gcs(df)
+
     # TCA
     tca = compute_tca(df)
 
@@ -282,6 +331,7 @@ def summarize_condition(path: Path) -> Dict[str, Any]:
         "SFI_ci_lower": sfi_ci[0],
         "SFI_ci_upper": sfi_ci[1],
         "FCCR": fccr,
+        "GCS": gcs,
         "TCA": tca,
         "latency_mean": lat_mean,
         "latency_std": lat_std,

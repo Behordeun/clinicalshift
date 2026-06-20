@@ -45,7 +45,7 @@ REGIME_EGFR_THRESHOLDS = {
     "schema_erasure": 30,
 }
 
-VALID_MODES = ["single", "linear", "graph"]
+VALID_MODES = ["single", "naive_rag", "linear", "graph"]
 
 
 # ---------------------------------------------------------------------
@@ -172,11 +172,13 @@ def get_collection_for_regime(regime: str):
 # ---------------------------------------------------------------------
 
 
-def llm_complete(prompt: str) -> str:
+def llm_complete(prompt: str, max_retries: int = 3, retry_delay: float = 5.0) -> str:
     """
     Call a local Ollama model to generate a completion.
 
-    Uses OLLAMA_MODEL and OLLAMA_BASE_URL defined above.
+    Retries on connection errors with exponential backoff.
+    Raises RuntimeError after max_retries so that failed calls
+    are NOT silently checkpointed as complete.
     """
     url = f"{OLLAMA_BASE_URL}/api/generate"
     payload = {
@@ -184,13 +186,27 @@ def llm_complete(prompt: str) -> str:
         "prompt": prompt,
         "stream": False,
     }
-    try:
-        resp = requests.post(url, json=payload, timeout=600)
-        resp.raise_for_status()
-        data = resp.json()
-        return data.get("response", "").strip()
-    except requests.RequestException as exc:
-        return f"[LLM ERROR: {exc}] {prompt[-400:]}"
+    for attempt in range(max_retries):
+        try:
+            resp = requests.post(url, json=payload, timeout=600)
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("response", "").strip()
+        except requests.ConnectionError as exc:
+            if attempt < max_retries - 1:
+                wait = retry_delay * (2 ** attempt)
+                print(f"  [LLM connection failed, retry {attempt+1}/{max_retries} in {wait:.0f}s]")
+                time.sleep(wait)
+            else:
+                raise RuntimeError(
+                    f"Ollama unreachable after {max_retries} attempts at {url}. "
+                    f"Is Ollama running? Error: {exc}"
+                ) from exc
+        except requests.RequestException as exc:
+            raise RuntimeError(
+                f"LLM call failed: {exc}"
+            ) from exc
+    return ""  # unreachable, satisfies type checker
 
 
 # ---------------------------------------------------------------------
@@ -332,7 +348,7 @@ def audit_agent_call(
         # Rule 2: CKD stage 4 (always contraindicated regardless of eGFR)
         has_ckd4 = any("ckd_stage4" in d for d in diagnoses)
         if has_ckd4:
-            issues.append("Metformin contraindicated in CKD stage 4 — " "risk of lactic acidosis.")
+            issues.append("Metformin contraindicated in CKD stage 4 —risk of lactic acidosis.")
             normalized_keys.append("metformin_ckd_stage4")
 
     # Deduplicate
@@ -529,7 +545,8 @@ def run_once(
 
     if mode == "single":
         state, audit_meta, confidence = single_agent_mode(x_raw, regime=regime)
-    elif mode == "linear":
+    elif mode in ("linear", "naive_rag"):
+        # naive_rag uses same logic as linear; collection override happens in run_condition
         state, audit_meta, confidence = linear_multi_agent_mode(
             x_raw=x_raw,
             gt_contradictions=gt_contradictions,
@@ -563,12 +580,115 @@ def run_once(
     )
 
 
+def _load_checkpoint(out_path: Path) -> set:
+    """Load already-processed patient IDs for crash recovery."""
+    if not out_path.exists() or out_path.stat().st_size == 0:
+        return set()
+    try:
+        existing = pd.read_csv(out_path)
+        ids = set(existing["patientid"].tolist())
+        print(f"Resuming: {len(ids)} patients already processed.")
+        return ids
+    except (pd.errors.EmptyDataError, KeyError):
+        out_path.unlink()
+        return set()
+
+
+class _ResultWriter:
+    """Thread-safe incremental CSV writer for pipeline results."""
+
+    def __init__(self, out_path: Path, processed_ids: set):
+        import csv
+        import threading
+
+        self._csv = csv
+        self._lock = threading.Lock()
+        self._out_path = out_path
+        self._processed_ids = processed_ids
+        self._write_header = not out_path.exists() or len(processed_ids) == 0
+        self._writer = None
+        self._file = open(out_path, "a", newline="")
+        self.completed_count = len(processed_ids)
+
+    def write(self, rec: RunRecord, total_count: int):
+        rec_dict = rec.__dict__
+        with self._lock:
+            if self._writer is None:
+                self._writer = self._csv.DictWriter(self._file, fieldnames=rec_dict.keys())
+                if self._write_header:
+                    self._writer.writeheader()
+                    self._write_header = False
+            self._writer.writerow(rec_dict)
+            self._file.flush()
+            self.completed_count += 1
+            self._processed_ids.add(rec.patientid)
+            if self.completed_count % 50 == 0:
+                print(f"  [{self.completed_count}/{total_count}]")
+
+    def close(self):
+        self._file.close()
+
+
+def _run_sequential(rows, regime, mode, collection, writer, total_count):
+    """Process patients sequentially."""
+    for row in rows:
+        try:
+            rec = run_once(row, regime=regime, mode=mode, collection=collection)
+        except RuntimeError as e:
+            print(f"\n\u274c Pipeline halted: {e}")
+            print(f"   Processed {writer.completed_count}/{total_count}.")
+            raise SystemExit(1) from e
+        writer.write(rec, total_count)
+
+
+def _run_parallel(rows, regime, mode, collection, writer, total_count, workers):
+    """Process patients with ThreadPoolExecutor."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(run_once, row, regime, mode, collection): row["patientid"]
+            for row in rows
+        }
+        for future in as_completed(futures):
+            try:
+                rec = future.result()
+            except RuntimeError as e:
+                for f_rem in futures:
+                    f_rem.cancel()
+                print(f"\n\u274c Pipeline halted: {e}")
+                print(f"   Processed {writer.completed_count}/{total_count}.")
+                raise SystemExit(1) from e
+            writer.write(rec, total_count)
+
+
+def _write_results(out_path: Path, df_prepared, processed_ids, regime, mode, collection, workers=1):
+    """Incrementally process patients and append results to CSV."""
+    rows_to_process = [
+        row for _, row in df_prepared.iterrows()
+        if row["patientid"] not in processed_ids
+    ]
+    if not rows_to_process:
+        return
+
+    total_count = len(processed_ids) + len(rows_to_process)
+    writer = _ResultWriter(out_path, processed_ids)
+    try:
+        if workers <= 1:
+            _run_sequential(rows_to_process, regime, mode, collection, writer, total_count)
+        else:
+            _run_parallel(rows_to_process, regime, mode, collection, writer, total_count, workers)
+    finally:
+        writer.close()
+
+
 def run_condition(
     patients_path: Path,
     regime: str,
     mode: str,
     n: int,
     seed: int = 42,
+    workers: int = 2,
 ) -> Path:
     if regime not in VALID_REGIMES:
         raise ValueError(f"regime must be one of {list(VALID_REGIMES.keys())}")
@@ -579,44 +699,18 @@ def run_condition(
     if 0 < n < len(df):
         df = df.sample(n=n, random_state=seed).reset_index(drop=True)
 
-    # Prepare patient rows with regime-dependent ground-truth contradictions
     df_prepared = df.apply(prepare_patient_row, axis=1, regime=regime)
 
-    collection_name = VALID_REGIMES[regime]
+    # Naive RAG always queries the baseline (tau_old) collection regardless of regime
+    if mode == "naive_rag":
+        collection_name = "tau_old"
+    else:
+        collection_name = VALID_REGIMES[regime]
     collection = get_collection_for_regime(collection_name)
 
-    out_name = f"results_{mode}_{regime}.csv"
-    out_path = RESULTS_DIR / out_name
-
-    # Checkpoint/resume: load already-processed patient IDs
-    processed_ids: set = set()
-    if out_path.exists():
-        existing = pd.read_csv(out_path)
-        processed_ids = set(existing["patientid"].tolist())
-        print(f"Resuming: {len(processed_ids)} patients already processed.")
-
-    # Open in append mode for incremental writing
-    write_header = not out_path.exists() or len(processed_ids) == 0
-    import csv
-
-    with open(out_path, "a", newline="") as f:
-        writer = None
-        for idx, row in df_prepared.iterrows():
-            pid = row["patientid"]
-            if pid in processed_ids:
-                continue
-
-            rec = run_once(row, regime=regime, mode=mode, collection=collection)
-            rec_dict = rec.__dict__
-
-            if writer is None:
-                writer = csv.DictWriter(f, fieldnames=rec_dict.keys())
-                if write_header:
-                    writer.writeheader()
-            writer.writerow(rec_dict)
-            f.flush()
-
-            processed_ids.add(pid)
+    out_path = RESULTS_DIR / f"results_{mode}_{regime}.csv"
+    processed_ids = _load_checkpoint(out_path)
+    _write_results(out_path, df_prepared, processed_ids, regime, mode, collection, workers=workers)
 
     print(f"Saved {out_path} ({len(processed_ids)} patients)")
     return out_path
@@ -657,9 +751,15 @@ def main():
         help="Sampling seed",
     )
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=2,
+        help="Number of parallel Ollama requests (default: 2 for M3 Pro 36GB)",
+    )
+    parser.add_argument(
         "--run-all",
         action="store_true",
-        help="Run all mode x regime combinations sequentially",
+        help="Run all mode x regime combinations",
     )
     args = parser.parse_args()
 
@@ -667,7 +767,7 @@ def main():
         for regime in VALID_REGIMES:
             for mode in VALID_MODES:
                 print(f"\n{'='*60}")
-                print(f"Running: mode={mode}, regime={regime}, n={args.n}")
+                print(f"Running: mode={mode}, regime={regime}, n={args.n}, workers={args.workers}")
                 print(f"{'='*60}")
                 run_condition(
                     patients_path=Path(args.patients),
@@ -675,6 +775,7 @@ def main():
                     mode=mode,
                     n=args.n,
                     seed=args.seed,
+                    workers=args.workers,
                 )
     else:
         if not args.regime or not args.mode:
@@ -685,6 +786,7 @@ def main():
             mode=args.mode,
             n=args.n,
             seed=args.seed,
+            workers=args.workers,
         )
 
 

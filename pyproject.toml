@@ -16,7 +16,8 @@ dependencies = [
     "torch>=2.1.0",
     "transformers>=5.0.0",
     "bert-score>=0.3.13",
-    "kaleido>=0.2.1"
+    "kaleido>=0.2.1",
+    "geopy>=2.4.1",
 ]
 
 [project.optional-dependencies]
