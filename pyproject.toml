@@ -2,6 +2,10 @@
 name = "clinicalshift-2026"
 version = "0.1.0"
 description = "Evaluating temporal robustness of multi-agent LLM architectures under clinical dataset shift"
+authors = [
+    { name = "Muhammad Abiodun Sulaiman", email = "abiodun.msulaiman@gmail.com" },
+    { name = "Bolaji Fatai Oyeyemi", email = "bolajioyeyemi@gmail.com" },
+]
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
